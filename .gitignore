@@ -1,0 +1,46 @@
+
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Folders
+_vendor/
+bin/
+*.app/
+*.exe
+*.test
+
+# Local configuration files
+.idea/
+.vscode/
+*.code-workspace
+
+# Compiled Go files
+*.test
+*.prof
+
+# Testing
+*.tmp
+*.bak
+
+# Dependency directories
+vendor/
+Godeps/
+*/Godeps/
+*/.glide/
+*/_workspace/
+
+# Output files
+*.out
+*.exe
+*.test
+*.pdf
+
+# OS-specific files
+Thumbs.db
+.DS_Store
+
+# Ignore secret files
+.secret
+*.secret
