@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	//"os"
+
 	"encoding/json"
 	"errors"
 
@@ -19,6 +20,11 @@ import (
 	_ "github.com/jackc/pgconn"
 	_ "github.com/jackc/pgx/v4"
 	_ "github.com/jackc/pgx/v4/stdlib"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 type Config struct {
@@ -40,6 +46,7 @@ func (app *Config) routes() http.Handler {
 	}))
 
 	mux.Post("/authenticate", app.Authenticate)
+	mux.Post("/register", app.Register)
 	return mux
 }
 
@@ -55,6 +62,12 @@ func main() {
 	if conn == nil {
 		log.Panic("Can't connect to Postgres!")
 	}
+
+	err := runMigrations(conn)
+	if err != nil {
+		log.Panic("Error running migrations:", err)
+	}
+
 	// set up config
 	app := Config{
 		DB:     conn,
@@ -66,14 +79,35 @@ func main() {
 		Handler: app.routes(),
 	}
 
-	err := srv.ListenAndServe()
-	if err != nil {
-		log.Panic(err)
+	err2 := srv.ListenAndServe()
+	if err2 != nil {
+		log.Panic(err2)
 	}
 }
 
-//helpers
+// helpers
+func runMigrations(db *sql.DB) error {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
 
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://./migrations",
+		"postgres", driver,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Run migrations
+	err = m.Up()
+	if err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+
+	return nil
+}
 func openDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -180,7 +214,72 @@ func (app *Config) errorJSON(w http.ResponseWriter, err error, status ...int) er
 
 // end helpers
 
-//handlers
+// handlers
+func (app *Config) Register(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+
+	var requestPayload struct {
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+
+	err := app.readJSON(w, r, &requestPayload)
+	if err != nil {
+		app.errorJSON(w, err, http.StatusBadRequest)
+		return
+	}
+
+	// Check if the email is already registered
+	existingUser, err := app.Models.User.GetByEmail(requestPayload.Email)
+	if err == nil && existingUser != nil {
+		app.errorJSON(w, errors.New("email is already registered"), http.StatusBadRequest)
+		return
+	}
+
+	// Hash the password before saving it to the database
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(requestPayload.Password), 12)
+	if err != nil {
+		app.errorJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	// Create a new user object
+	newUser := models.User{
+		Email:     requestPayload.Email,
+		Password:  string(hashedPassword),
+		FirstName: requestPayload.FirstName,
+		LastName:  requestPayload.LastName,
+		Active:    1, // Assuming a new user is active by default
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Insert the new user into the database
+	userID, err := app.Models.User.Insert(newUser)
+	if err != nil {
+		app.errorJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with the newly created user
+	createdUser, err := app.Models.User.GetOne(userID)
+	if err != nil {
+		app.errorJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "User registered successfully",
+		Data:    createdUser,
+	}
+
+	app.writeJSON(w, http.StatusCreated, payload)
+}
 
 func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
