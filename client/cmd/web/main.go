@@ -11,7 +11,7 @@ import (
 
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		render(w, "goajaxtest.html")
+		render(w, "goindex.html")
 	})
 
 	fmt.Println("Starting front end service on port 8080")

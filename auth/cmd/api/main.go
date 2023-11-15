@@ -31,7 +31,7 @@ func (app *Config) routes() http.Handler {
 
 	// specify who is allowed to connect
 	mux.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -183,6 +183,10 @@ func (app *Config) errorJSON(w http.ResponseWriter, err error, status ...int) er
 //handlers
 
 func (app *Config) Authenticate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+
 	var requestPayload struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
