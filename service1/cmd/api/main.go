@@ -21,7 +21,7 @@ func (app *Config) routes() http.Handler {
 
 	// specify who is allowed to connect
 	mux.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
@@ -37,6 +37,11 @@ func (app *Config) routes() http.Handler {
 }
 
 func (app *Config) Service1(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for this handler
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+
 	payload := jsonResponse{
 		Error:   false,
 		Message: "Hit the Service1",
@@ -45,9 +50,9 @@ func (app *Config) Service1(w http.ResponseWriter, r *http.Request) {
 }
 
 type jsonResponse struct {
-	Error bool `json:"error"`
+	Error   bool   `json:"error"`
 	Message string `json:"message"`
-	Data any `json:"data,omitempty"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // readJSON tries to read the body of a request and converts it into JSON
@@ -110,7 +115,6 @@ func (app *Config) errorJSON(w http.ResponseWriter, err error, status ...int) er
 }
 
 const webPort = "8081"
-
 
 func main() {
 	app := Config{}
