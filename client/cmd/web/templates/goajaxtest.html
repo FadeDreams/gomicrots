@@ -31,6 +31,7 @@
                     document.getElementById('result').innerHTML = xhr.responseText;
                 }
             };
+            <!--xhr.open('POST', 'http://localhost:8081', true);-->
             xhr.open('POST', 'http://localhost:8081', true);
             xhr.send();
         });
