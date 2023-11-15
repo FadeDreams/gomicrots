@@ -22,6 +22,7 @@ bin/
 
 # Testing
 *.tmp
+tmp/
 *.bak
 
 # Dependency directories
@@ -44,3 +45,5 @@ Thumbs.db
 # Ignore secret files
 .secret
 *.secret
+.vim
+*.vim
