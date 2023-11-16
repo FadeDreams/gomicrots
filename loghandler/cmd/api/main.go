@@ -2,211 +2,152 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"loghandler/data"
 	"net/http"
 	"time"
 
+	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
-
-	"encoding/json"
-	"errors"
-	"io"
 )
 
-const (
-	webPort  = "8083"
-	rpcPort  = "5001"
-	mongoURL = "mongodb://mongo:27017"
-	gRpcPort = "50001"
-)
-
-var client *mongo.Client
-
-type Config struct {
-	Models data.Models
+// LogEntry represents a log entry structure
+type LogEntry struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }
 
-func (app *Config) routes() http.Handler {
-	mux := chi.NewRouter()
-
-	// specify who is allowed to connect
-	mux.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"https://*", "http://*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
-
-	mux.Use(middleware.Heartbeat("/ping"))
-
-	mux.Post("/log", app.WriteLog)
-
-	return mux
+// MongoDBLogger represents the MongoDB logger
+type MongoDBLogger struct {
+	client     *mongo.Client
+	collection *mongo.Collection
 }
 
-func main() {
-	// connect to mongo
-	mongoClient, err := connectToMongo()
-	if err != nil {
-		log.Panic(err)
-	}
-	client = mongoClient
-
-	// create a context in order to disconnect
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	// close connection
-	defer func() {
-		if err = client.Disconnect(ctx); err != nil {
-			panic(err)
-		}
-	}()
-
-	app := Config{
-		Models: data.New(client),
-	}
-
-	// start web server
-	go app.serve()
-
-}
-
-func (app *Config) serve() {
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%s", webPort),
-		Handler: app.routes(),
-	}
-
-	err := srv.ListenAndServe()
-	if err != nil {
-		log.Panic()
-	}
-}
-
-func connectToMongo() (*mongo.Client, error) {
-	// create connection options
-	fmt.Println("Connecting to mongo...")
-	clientOptions := options.Client().ApplyURI(mongoURL)
+// NewMongoDBLogger creates a new MongoDB logger
+func NewMongoDBLogger(connectionString, dbName, collectionName string) (*MongoDBLogger, error) {
+	clientOptions := options.Client().ApplyURI(connectionString)
+	//clientOptions.Auth = &options.Credential{
+	//Username: "admin",
+	//Password: "password",
+	//}
 	clientOptions.SetAuth(options.Credential{
 		Username: "admin",
 		Password: "password",
 	})
-
-	// connect
-	c, err := mongo.Connect(context.TODO(), clientOptions)
+	client, err := mongo.NewClient(clientOptions)
 	if err != nil {
-		log.Println("Error connecting:", err)
 		return nil, err
 	}
 
-	return c, nil
-}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-//helpers
-
-type jsonResponse struct {
-	Error   bool   `json:"error"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
-}
-
-// readJSON tries to read the body of a request and converts it into JSON
-func (app *Config) readJSON(w http.ResponseWriter, r *http.Request, data any) error {
-	maxBytes := 1048576 // one megabyte
-
-	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
-
-	dec := json.NewDecoder(r.Body)
-	err := dec.Decode(data)
+	err = client.Connect(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	err = dec.Decode(&struct{}{})
-	if err != io.EOF {
-		return errors.New("body must have only a single JSON value")
-	}
+	collection := client.Database(dbName).Collection(collectionName)
 
-	return nil
+	return &MongoDBLogger{
+		client:     client,
+		collection: collection,
+	}, nil
 }
 
-// writeJSON takes a response status code and arbitrary data and writes a json response to the client
-func (app *Config) writeJSON(w http.ResponseWriter, status int, data any, headers ...http.Header) error {
-	out, err := json.Marshal(data)
-	if err != nil {
-		return err
+// Log writes a log entry to MongoDB
+func (logger *MongoDBLogger) Log(level, message string) error {
+	entry := LogEntry{
+		Level:   level,
+		Message: message,
 	}
 
-	if len(headers) > 0 {
-		for key, value := range headers[0] {
-			w.Header()[key] = value
+	_, err := logger.collection.InsertOne(context.Background(), entry)
+	return err
+}
+
+// Close closes the MongoDB logger connection
+func (logger *MongoDBLogger) Close() {
+	if logger.client != nil && logger.client.Ping(context.Background(), nil) == nil {
+		err := logger.client.Disconnect(context.Background())
+		if err != nil {
+			log.Println("Error closing MongoDB connection:", err)
 		}
 	}
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, err = w.Write(out)
+// LogHandler handles incoming log entries via HTTP POST requests
+func LogHandler(logger *MongoDBLogger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var entry LogEntry
+		err := json.NewDecoder(r.Body).Decode(&entry)
+		if err != nil {
+			log.Printf("Error decoding request body: %v\n", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		err = logger.Log(entry.Level, entry.Message)
+		if err != nil {
+			log.Printf("Error logging message: %v\n", err)
+			http.Error(w, "Error logging message", http.StatusInternalServerError)
+			return
+		}
+
+		// Allow CORS
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		fmt.Fprintln(w, "Log entry added to MongoDB.")
+	}
+}
+
+func main() {
+	// Replace the following values with your MongoDB connection details
+	connectionString := "mongodb://admin:password@mongodb:27017"
+	dbName := "logs"
+	collectionName := "log_entries"
+
+	logger, err := NewMongoDBLogger(connectionString, dbName, collectionName)
 	if err != nil {
-		return err
+		log.Fatal("Error creating MongoDB logger:", err)
 	}
 
-	return nil
-}
+	defer logger.Close()
 
-// errorJSON takes an error, and optionally a response status code, and generates and sends
-// a json error response
-func (app *Config) errorJSON(w http.ResponseWriter, err error, status ...int) error {
-	statusCode := http.StatusBadRequest
+	// Create a new router using gorilla/mux
+	r := mux.NewRouter()
 
-	if len(status) > 0 {
-		statusCode = status[0]
+	// Register the LogHandler as the handler for the "/log" endpoint
+	r.HandleFunc("/log", LogHandler(logger)).Methods("POST")
+
+	// CORS middleware
+	corsMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			next.ServeHTTP(w, r)
+		})
 	}
 
-	var payload jsonResponse
-	payload.Error = true
-	payload.Message = err.Error()
+	// Attach the CORS middleware
+	r.Use(corsMiddleware)
 
-	return app.writeJSON(w, statusCode, payload)
-}
-
-//handlers
-
-type JSONPayload struct {
-	Name string `json:"name"`
-	Data string `json:"data"`
-}
-
-func (app *Config) WriteLog(w http.ResponseWriter, r *http.Request) {
-	// read json into var
-	var requestPayload JSONPayload
-	_ = app.readJSON(w, r, &requestPayload)
-
-	// insert data
-	event := data.LogEntry{
-		Name: requestPayload.Name,
-		Data: requestPayload.Data,
-	}
-
-	err := app.Models.LogEntry.Insert(event)
+	// Start the HTTP server
+	port := 8083
+	log.Printf("Server listening on :%d...\n", port)
+	err = http.ListenAndServe(fmt.Sprintf(":%d", port), r)
 	if err != nil {
-		app.errorJSON(w, err)
-		return
+		log.Fatal("Error starting HTTP server:", err)
 	}
-
-	resp := jsonResponse{
-		Error:   false,
-		Message: "logged",
-	}
-
-	app.writeJSON(w, http.StatusAccepted, resp)
 }
+

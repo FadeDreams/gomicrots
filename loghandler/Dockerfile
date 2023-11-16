@@ -13,7 +13,6 @@ run go mod download
 
 # copy only the necessary files into the container
 copy ./cmd/api /app/cmd/api
-copy ./data /app/data
 
 # build the go app
 run go build -o ./app ./cmd/api
