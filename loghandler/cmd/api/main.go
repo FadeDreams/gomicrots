@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -28,10 +29,6 @@ type MongoDBLogger struct {
 // NewMongoDBLogger creates a new MongoDB logger
 func NewMongoDBLogger(connectionString, dbName, collectionName string) (*MongoDBLogger, error) {
 	clientOptions := options.Client().ApplyURI(connectionString)
-	//clientOptions.Auth = &options.Credential{
-	//Username: "admin",
-	//Password: "password",
-	//}
 	clientOptions.SetAuth(options.Credential{
 		Username: "admin",
 		Password: "password",
@@ -81,6 +78,11 @@ func (logger *MongoDBLogger) Close() {
 // LogHandler handles incoming log entries via HTTP POST requests
 func LogHandler(logger *MongoDBLogger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Allow CORS
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 			return
@@ -101,11 +103,6 @@ func LogHandler(logger *MongoDBLogger) http.HandlerFunc {
 			return
 		}
 
-		// Allow CORS
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "POST")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
 		fmt.Fprintln(w, "Log entry added to MongoDB.")
 	}
 }
@@ -123,31 +120,31 @@ func main() {
 
 	defer logger.Close()
 
-	// Create a new router using gorilla/mux
-	r := mux.NewRouter()
+	// Create a new router using go-chi/chi
+	mux := chi.NewRouter()
+
+	// Use cors middleware
+	mux.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	// Register the LogHandler as the handler for the "/log" endpoint
-	r.HandleFunc("/log", LogHandler(logger)).Methods("POST")
-
-	// CORS middleware
-	corsMiddleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			next.ServeHTTP(w, r)
-		})
-	}
-
-	// Attach the CORS middleware
-	r.Use(corsMiddleware)
+	mux.Post("/log", LogHandler(logger))
 
 	// Start the HTTP server
 	port := 8083
-	log.Printf("Server listening on :%d...\n", port)
-	err = http.ListenAndServe(fmt.Sprintf(":%d", port), r)
-	if err != nil {
-		log.Fatal("Error starting HTTP server:", err)
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+	}
+
+	err2 := srv.ListenAndServe()
+	if err2 != nil {
+		log.Panic(err2)
 	}
 }
-
