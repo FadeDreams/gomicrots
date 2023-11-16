@@ -85,6 +85,17 @@ services:
     networks:
       - netdc1
 
+  amqp1:
+    build:
+      context: ./amqp1
+      dockerfile: Dockerfile
+    restart: always
+    deploy:
+      mode: replicated
+      replicas: 1
+    networks:
+      - netdc1
+
   mongodb:
     image: 'mongo:latest'
     restart: always
@@ -96,6 +107,18 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: password
     volumes:
       - mongodb-data:/data/db
+    networks:
+      - netdc1
+
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    restart: always
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # RabbitMQ Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     networks:
       - netdc1
 

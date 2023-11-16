@@ -1,3 +1,5 @@
+// event.go
+
 package event
 
 import (
@@ -10,9 +12,36 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type Consumer struct {
-	conn      *amqp.Connection
-	queueName string
+type Payload struct {
+	Name string `json:"name"`
+	Data string `json:"data"`
+}
+
+func logEvent(entry Payload) error {
+	// Assuming log handler URL is "http://loghandler:8083/log"
+	logHandlerURL := "http://loghandler:8083/log"
+
+	// Convert payload to JSON
+	jsonData, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+
+	// Make the HTTP POST request
+	resp, err := http.Post(logHandlerURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected response status: %d", resp.StatusCode)
+	}
+
+	fmt.Println("Log event posted successfully")
+
+	return nil
 }
 
 func NewConsumer(conn *amqp.Connection) (Consumer, error) {
@@ -37,9 +66,9 @@ func (consumer *Consumer) setup() error {
 	return declareExchange(channel)
 }
 
-type Payload struct {
-	Name string `json:"name"`
-	Data string `json:"data"`
+type Consumer struct {
+	conn      *amqp.Connection
+	queueName string
 }
 
 // Listen will listen to the queue and handle the messages
@@ -87,33 +116,6 @@ func (consumer *Consumer) Listen(topics []string) error {
 
 	fmt.Printf("Waiting for message [Exchange, Queue] [logs_topic, %s]\n", q.Name)
 	<-forever
-
-	return nil
-}
-
-func logEvent(entry Payload) error {
-	jsonData, _ := json.MarshalIndent(entry, "", "\t")
-
-	logServiceURL := "http://logger-service/log"
-
-	request, err := http.NewRequest("POST", logServiceURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return err
-	}
-
-	request.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusAccepted {
-		return err
-	}
 
 	return nil
 }

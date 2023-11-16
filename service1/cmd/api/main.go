@@ -9,10 +9,30 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
+
+type Payload struct {
+	Name string `json:"name"`
+	Data string `json:"data"`
+}
+
+func declareExchange(ch *amqp.Channel) error {
+	return ch.ExchangeDeclare(
+		"logs_topic", // name
+		"topic",      // type
+		true,         // durable?
+		false,        // auto-deleted?
+		false,        // internal?
+		false,        // no-wait?
+		nil,          // arguments?
+	)
+}
 
 type Config struct{}
 
@@ -32,6 +52,8 @@ func (app *Config) routes() http.Handler {
 	mux.Use(middleware.Heartbeat("/ping"))
 
 	mux.Post("/", app.Service1)
+	mux.Post("/push", app.PushRMQ)
+	mux.Post("/log", app.LogH)
 
 	return mux
 }
@@ -47,6 +69,101 @@ func (app *Config) Service1(w http.ResponseWriter, r *http.Request) {
 		Message: "Hit the Service1",
 	}
 	_ = app.writeJSON(w, http.StatusOK, payload)
+}
+
+func (app *Config) PushRMQ(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for this handler
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+	// Connect to RabbitMQ
+	rabbitConn, err := amqp.Dial("amqp://guest:guest@rabbitmq")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rabbitConn.Close()
+
+	// Create a channel
+	channel, err := rabbitConn.Channel()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer channel.Close()
+
+	// Declare the exchange
+	err = declareExchange(channel)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Publish a message
+	message := Payload{
+		Name: "log",
+		Data: "Your log message data here",
+	}
+
+	jsonData, err := json.Marshal(message)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = channel.Publish(
+		"logs_topic", // exchange
+		"log.INFO",   // routing key
+		false,        // mandatory
+		false,        // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        jsonData,
+		},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("Message published successfully")
+
+	payload := jsonResponse{
+		Error:   false,
+		Message: "Message published successfully",
+	}
+	_ = app.writeJSON(w, http.StatusOK, payload)
+}
+
+func (app *Config) LogH(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers for this handler
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST")
+	w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token")
+
+	payload := map[string]string{
+		"level":   "data",
+		"message": "xx",
+	}
+
+	// Convert payload to JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Println("Error marshaling JSON:", err)
+		return
+	}
+
+	// Make the POST request
+	url := "http://loghandler:8083/log"
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		fmt.Println("Error making POST request:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check the response status
+	if resp.StatusCode != http.StatusOK {
+		fmt.Printf("Unexpected response status: %d\n", resp.StatusCode)
+		return
+	}
+
+	fmt.Println("POST request successful!")
 }
 
 type jsonResponse struct {
