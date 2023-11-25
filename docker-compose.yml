@@ -36,6 +36,21 @@ services:
     networks:
       - netdc1
 
+  react:
+    build:
+      context: ./react_client
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "3000:3000"
+    deploy:
+      mode: replicated
+      replicas: 1
+    volumes:
+      - react-data:/path/to/react/data
+    networks:
+      - netdc1
+
   auth:
     build:
       context: ./auth
@@ -125,6 +140,7 @@ services:
 volumes:
   service1-data:
   client-data:
+  react-data:
   auth-data:
   postgres-data:
   loghandler-data:
