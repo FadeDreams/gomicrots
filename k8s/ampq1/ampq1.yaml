@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amqp1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amqp1
+  template:
+    metadata:
+      labels:
+        app: amqp1
+    spec:
+      containers:
+      - name: amqp1
+        image: amqp1:latest
+        ports:
+        - containerPort: 8084

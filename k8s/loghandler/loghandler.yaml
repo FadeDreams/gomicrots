@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loghandler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loghandler
+  template:
+    metadata:
+      labels:
+        app: loghandler
+    spec:
+      containers:
+      - name: loghandler
+        image: loghandler:latest
+        ports:
+        - containerPort: 8083
+        volumeMounts:
+        - name: loghandler-data
+          mountPath: /path/to/loghandler/data
+      volumes:
+      - name: loghandler-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loghandler
+spec:
+  selector:
+    app: loghandler
+  ports:
+    - port: 8083
+      targetPort: 8083
+  type: LoadBalancer

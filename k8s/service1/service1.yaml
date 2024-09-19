@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service1
+  template:
+    metadata:
+      labels:
+        app: service1
+    spec:
+      containers:
+      - name: service1
+        image: service1:latest
+        ports:
+        - containerPort: 8081
+        volumeMounts:
+        - name: service1-data
+          mountPath: /path/to/service1/data
+      volumes:
+      - name: service1-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service1
+spec:
+  selector:
+    app: service1
+  ports:
+    - port: 8081
+      targetPort: 8081
+  type: LoadBalancer
